@@ -88,12 +88,42 @@ cd /opt/cliproxyapi && docker compose -p cpa up -d
 └── install-result.txt   # 安装结果（密钥信息）
 ```
 
+## 安全说明
+
+### 两层认证
+
+| 路径 | 认证方式 |
+|------|----------|
+| `/management.html` | Caddy HTTP Basic Auth（用户名 + 密码） |
+| `/v0/management/*` | CPA 自身的 Bearer token（管理密钥） |
+| `/v1/*` | API Key |
+
+管理 API **不能**加 Basic Auth——管理页面的 JS 会发送 `Authorization: Bearer <管理密钥>`，
+而一个请求只能带一个 `Authorization` 头，Basic 会被 Bearer 覆盖，导致 Caddy 反复弹出登录框且永远无法通过。
+
+### 需要注意的暴露面
+
+因为上述限制，`/v0/management/*` 直接暴露在公网，只靠 CPA 的 Bearer token 防护，且**没有速率限制**。
+如果你的管理来源 IP 固定，建议在 `/opt/cliproxyapi/Caddyfile` 中取消 `@mgmt_api_denied` 那段注释并填入自己的 IP，
+然后执行 `cd /opt/cliproxyapi && docker compose -p cpa restart caddy`。
+
+### OAuth 回调端口
+
+CPA 用于登录上游账号的回调端口（8085/1455/54545/51121/11451）只绑定在 `127.0.0.1`，不对公网开放。
+如果需要在面板里登录上游账号，请先建立 SSH 隧道，例如：
+
+```bash
+ssh -L 8085:127.0.0.1:8085 root@你的VPS
+```
+
 ## 注意事项
 
 - 仅支持 **Debian/Ubuntu** 系统
 - 需要 **root** 权限运行
 - 80 和 443 端口不能被其他服务占用（如 3x-ui 面板）
 - 重复运行会自动备份旧配置，并复用之前的密钥
+- **重复运行会覆盖 `config.yaml`**：如果你在管理面板里手工添加过账号或模型配置，
+  重跑前请先备份（脚本会自动备份到 `backup-*/`，但不会自动恢复）
 - 如果域名 DNS 尚未生效，脚本会提示是否继续
 
 ## 相关项目

@@ -21,7 +21,7 @@ on_error() {
   echo -e "${RED}[ERROR]${NC} 安装在第 ${line} 行失败。" >&2
   if [[ -d "$INSTALL_DIR" ]] && command -v docker >/dev/null 2>&1; then
     echo "最近日志：" >&2
-    (cd "$INSTALL_DIR" && docker compose logs --tail=80 2>/dev/null) || true
+    (cd "$INSTALL_DIR" && docker compose -p "$STACK_NAME" logs --tail=80 2>/dev/null) || true
   fi
 }
 trap 'on_error "$LINENO"' ERR
@@ -38,6 +38,9 @@ mkdir -p "$INSTALL_DIR"
 chmod 700 "$INSTALL_DIR"
 
 # 复用上次安装生成的参数，避免重新运行脚本后 API Key 改变。
+# 注意：密钥必须从 credentials.env 读取，不能从 config.yaml 读取——
+# CPA 启动后会把 config.yaml 里的 secret-key 原地改写成 bcrypt 哈希，
+# 拿哈希当明文重新写回配置会导致管理页面永远登录失败。
 DOMAIN="${DOMAIN:-}"
 PROXY_HOST="${PROXY_HOST:-}"
 PROXY_PORT="${PROXY_PORT:-}"
@@ -120,11 +123,12 @@ fi
 systemctl enable --now docker >/dev/null 2>&1 || true
 docker compose version >/dev/null 2>&1 || die "Docker Compose 插件不可用。"
 
+# 通过环境变量传值，避免密码出现在进程列表（ps aux）中。
 urlencode() {
-  python3 - "$1" <<'PY'
-import sys
+  URLENCODE_INPUT="$1" python3 - <<'PY'
+import os
 from urllib.parse import quote
-print(quote(sys.argv[1], safe=""))
+print(quote(os.environ["URLENCODE_INPUT"], safe=""))
 PY
 }
 
@@ -134,10 +138,10 @@ PROXY_URL="socks5://${ENC_USER}:${ENC_PASS}@${PROXY_HOST}:${PROXY_PORT}"
 
 info "测试家宽 SOCKS5 代理……"
 VPS_IP="$(curl -4fsS --connect-timeout 8 --max-time 15 https://api.ipify.org || true)"
-PROXY_IP="$(curl -4fsS --connect-timeout 10 --max-time 30 \
-  --proxy "socks5h://${PROXY_HOST}:${PROXY_PORT}" \
-  --proxy-user "${PROXY_USER}:${PROXY_PASS}" \
-  https://api.ipify.org || true)"
+# 走环境变量而非 --proxy-user，避免密码出现在进程列表中。
+# socks5h 表示由代理侧解析 DNS，测试连通性更接近真实出口。
+PROXY_IP="$(ALL_PROXY="socks5h://${ENC_USER}:${ENC_PASS}@${PROXY_HOST}:${PROXY_PORT}" \
+  curl -4fsS --connect-timeout 10 --max-time 30 https://api.ipify.org || true)"
 [[ -n "$PROXY_IP" ]] || die "SOCKS5 代理连接失败。请检查地址、端口、账号密码，以及代理商是否要求添加 VPS IP 白名单。"
 success "代理可用，检测到出口 IP：${PROXY_IP}"
 if [[ -n "$VPS_IP" && "$VPS_IP" == "$PROXY_IP" ]]; then
@@ -185,7 +189,12 @@ chmod 700 "${INSTALL_DIR}/auths" "${INSTALL_DIR}/logs"
 
 info "准备 Caddy 管理页外层密码……"
 docker pull caddy:2-alpine >/dev/null
-BASIC_HASH="$(docker run --rm caddy:2-alpine caddy hash-password --plaintext "$BASIC_PASS")"
+# 通过 stdin 传入密码，避免明文出现在进程列表和 docker 容器元数据中。
+# 省略 --plaintext 时 caddy hash-password 会从 stdin 读取密码。
+BASIC_HASH="$(printf '%s\n' "$BASIC_PASS" \
+  | docker run --rm -i caddy:2-alpine caddy hash-password)"
+BASIC_HASH="${BASIC_HASH%%[$'\r\n']*}"
+[[ "$BASIC_HASH" == \$2* ]] || die "生成 Caddy 密码哈希失败，无法继续。"
 
 cat > "${INSTALL_DIR}/config.yaml" <<EOF
 host: ""
@@ -231,6 +240,15 @@ ${DOMAIN} {
     basic_auth @management_page {
         ${BASIC_USER} ${BASIC_HASH}
     }
+
+    # 可选加固：管理 API 直接暴露在公网，仅靠 CPA 的 Bearer token 防护。
+    # 若你的管理来源 IP 固定，取消下面三行注释并填入自己的 IP，
+    # 改完执行：cd ${INSTALL_DIR} && docker compose -p ${STACK_NAME} restart caddy
+    # @mgmt_api_denied {
+    #     path /v0/management*
+    #     not remote_ip 203.0.113.10/32
+    # }
+    # respond @mgmt_api_denied 403
 
     reverse_proxy cli-proxy-api:8317
 }
@@ -286,18 +304,19 @@ volumes:
   caddy-config:
 YAML
 
-# 使用 shell 可安全再次 source 的格式保存安装参数。
-# 注意：使用 %s 而非 %q，避免 bash 版本差异导致转义不一致。
+# 保存安装参数供重跑时复用。本文件会被脚本开头 source，
+# 因此必须用 %q 写入：代理用户名/密码是纯用户输入，可能含空格、引号、
+# $ 或反引号，用 %s 会导致重新 source 时被截断、语法错误甚至执行命令。
 {
-  printf 'DOMAIN=%s\n' "$DOMAIN"
-  printf 'PROXY_HOST=%s\n' "$PROXY_HOST"
-  printf 'PROXY_PORT=%s\n' "$PROXY_PORT"
-  printf 'PROXY_USER=%s\n' "$PROXY_USER"
-  printf 'PROXY_PASS=%s\n' "$PROXY_PASS"
-  printf 'API_KEY=%s\n' "$API_KEY"
-  printf 'MGMT_KEY=%s\n' "$MGMT_KEY"
-  printf 'BASIC_USER=%s\n' "$BASIC_USER"
-  printf 'BASIC_PASS=%s\n' "$BASIC_PASS"
+  printf 'DOMAIN=%q\n' "$DOMAIN"
+  printf 'PROXY_HOST=%q\n' "$PROXY_HOST"
+  printf 'PROXY_PORT=%q\n' "$PROXY_PORT"
+  printf 'PROXY_USER=%q\n' "$PROXY_USER"
+  printf 'PROXY_PASS=%q\n' "$PROXY_PASS"
+  printf 'API_KEY=%q\n' "$API_KEY"
+  printf 'MGMT_KEY=%q\n' "$MGMT_KEY"
+  printf 'BASIC_USER=%q\n' "$BASIC_USER"
+  printf 'BASIC_PASS=%q\n' "$BASIC_PASS"
 } > "${INSTALL_DIR}/credentials.env"
 chmod 600 "${INSTALL_DIR}/credentials.env"
 
