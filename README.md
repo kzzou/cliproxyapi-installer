@@ -24,7 +24,7 @@
 
 ```bash
 # 下载脚本
-wget https://raw.githubusercontent.com/kzzou/cliproxyapi-installer/main/install_cpa_domain.sh
+wget https://raw.githubusercontent.com/kzzou/cliproxyapi-installer/master/install_cpa_domain.sh
 
 # 赋予执行权限
 chmod +x install_cpa_domain.sh
