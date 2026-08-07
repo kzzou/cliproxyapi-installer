@@ -285,16 +285,17 @@ volumes:
 YAML
 
 # 使用 shell 可安全再次 source 的格式保存安装参数。
+# 注意：使用 %s 而非 %q，避免 bash 版本差异导致转义不一致。
 {
-  printf 'DOMAIN=%q\n' "$DOMAIN"
-  printf 'PROXY_HOST=%q\n' "$PROXY_HOST"
-  printf 'PROXY_PORT=%q\n' "$PROXY_PORT"
-  printf 'PROXY_USER=%q\n' "$PROXY_USER"
-  printf 'PROXY_PASS=%q\n' "$PROXY_PASS"
-  printf 'API_KEY=%q\n' "$API_KEY"
-  printf 'MGMT_KEY=%q\n' "$MGMT_KEY"
-  printf 'BASIC_USER=%q\n' "$BASIC_USER"
-  printf 'BASIC_PASS=%q\n' "$BASIC_PASS"
+  printf 'DOMAIN=%s\n' "$DOMAIN"
+  printf 'PROXY_HOST=%s\n' "$PROXY_HOST"
+  printf 'PROXY_PORT=%s\n' "$PROXY_PORT"
+  printf 'PROXY_USER=%s\n' "$PROXY_USER"
+  printf 'PROXY_PASS=%s\n' "$PROXY_PASS"
+  printf 'API_KEY=%s\n' "$API_KEY"
+  printf 'MGMT_KEY=%s\n' "$MGMT_KEY"
+  printf 'BASIC_USER=%s\n' "$BASIC_USER"
+  printf 'BASIC_PASS=%s\n' "$BASIC_PASS"
 } > "${INSTALL_DIR}/credentials.env"
 chmod 600 "${INSTALL_DIR}/credentials.env"
 
