@@ -1,0 +1,9 @@
+# 安装结果文件（含密钥），不提交
+install-result.txt
+credentials.env
+
+# 备份目录
+backup-*/
+
+# OMC 插件数据
+.omc/
