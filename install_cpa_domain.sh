@@ -222,11 +222,13 @@ cat > "${INSTALL_DIR}/Caddyfile" <<EOF
 ${DOMAIN} {
     encode zstd gzip
 
-    # 管理页面使用额外的 HTTP Basic Auth；进入页面后仍需 CPA 管理密钥。
-    @management {
-        path /management.html /v0/management /v0/management/*
+    # 只对管理页面本身使用 HTTP Basic Auth。
+    # API 端点 /v0/management/* 由 CPA 自身的 Bearer token 认证，
+    # 不能加 Basic Auth，否则会和 JS 发送的 Authorization: Bearer 冲突。
+    @management_page {
+        path /management.html
     }
-    basic_auth @management {
+    basic_auth @management_page {
         ${BASIC_USER} ${BASIC_HASH}
     }
 
